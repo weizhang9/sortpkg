@@ -74,13 +74,13 @@ func Execute(projectName, filePath, localPkgPrefixes string, options ...Option) 
 		return nil, false, err
 	}
 
-	stdImports, generalImports, projectLocalPkgs, projectImports := groupImports(
+	stdImports, projectImports, generalImports := groupImports(
 		projectName,
 		localPkgPrefixes,
 		importsWithMetadata,
 	)
 
-	fixImports(pf, stdImports, generalImports, projectLocalPkgs, projectImports, importsWithMetadata)
+	fixImports(pf, stdImports, projectImports, generalImports, importsWithMetadata)
 
 	fixedImportsContent, err := generateFile(fset, pf)
 	if err != nil {
@@ -99,7 +99,7 @@ func groupImports(
 	projectName string,
 	localPkgPrefixes string,
 	importsWithMetadata map[string]*commentsMetadata,
-) ([]string, []string, []string, []string) {
+) ([]string, []string, []string) {
 	var (
 		stdImports       []string
 		projectImports   []string
@@ -131,7 +131,7 @@ func groupImports(
 		}
 
 		if strings.Contains(pkgWithoutAlias, projectName) {
-			projectImports = append(projectImports, imprt)
+			projectImports = append(append(projectImports, imprt), projectLocalPkgs...)
 			continue
 		}
 
@@ -140,10 +140,9 @@ func groupImports(
 
 	sort.Strings(stdImports)
 	sort.Strings(generalImports)
-	sort.Strings(projectLocalPkgs)
 	sort.Strings(projectImports)
 
-	return stdImports, generalImports, projectLocalPkgs, projectImports
+	return stdImports, projectImports, generalImports
 }
 
 func commaValueToSlice(s string) []string {
@@ -184,7 +183,7 @@ func generateFile(fset *token.FileSet, file *ast.File) ([]byte, error) {
 
 func fixImports(
 	f *ast.File,
-	stdImports, generalImports, projectLocalPkgs, projectImports []string,
+	stdImports, projectImports, generalImports []string,
 	commentsMetadata map[string]*commentsMetadata,
 ) {
 	var importsPositions []*importPosition
@@ -206,7 +205,7 @@ func fixImports(
 			},
 		)
 
-		dd.Specs = rebuildImports(dd.Tok, commentsMetadata, stdImports, generalImports, projectLocalPkgs, projectImports)
+		dd.Specs = rebuildImports(dd.Tok, commentsMetadata, stdImports, projectImports, generalImports)
 	}
 
 	clearImportDocs(f, importsPositions)
@@ -216,9 +215,8 @@ func rebuildImports(
 	tok token.Token,
 	commentsMetadata map[string]*commentsMetadata,
 	stdImports []string,
-	generalImports []string,
-	projectLocalPkgs []string,
 	projectImports []string,
+	generalImports []string,
 ) []ast.Spec {
 	var specs []ast.Spec
 
@@ -231,48 +229,32 @@ func rebuildImports(
 
 		linesCounter--
 
-		if linesCounter == 0 && (len(generalImports) > 0 || len(projectLocalPkgs) > 0 || len(projectImports) > 0) {
+		if linesCounter == 0 && (len(generalImports) > 0 || len(projectImports) > 0) {
 			spec = &ast.ImportSpec{Path: &ast.BasicLit{Value: "", Kind: token.STRING}}
 
 			specs = append(specs, spec)
 		}
 	}
 
-	linesCounter = len(generalImports)
-	for _, generalImport := range generalImports {
-		spec := &ast.ImportSpec{
-			Path: &ast.BasicLit{Value: importWithComment(generalImport, commentsMetadata), Kind: tok},
-		}
-		specs = append(specs, spec)
-
-		linesCounter--
-
-		if linesCounter == 0 && (len(projectLocalPkgs) > 0 || len(projectImports) > 0) {
-			spec = &ast.ImportSpec{Path: &ast.BasicLit{Value: "", Kind: token.STRING}}
-
-			specs = append(specs, spec)
-		}
-	}
-
-	linesCounter = len(projectLocalPkgs)
-	for _, projectLocalPkg := range projectLocalPkgs {
-		spec := &ast.ImportSpec{
-			Path: &ast.BasicLit{Value: importWithComment(projectLocalPkg, commentsMetadata), Kind: tok},
-		}
-		specs = append(specs, spec)
-
-		linesCounter--
-
-		if linesCounter == 0 && len(projectImports) > 0 {
-			spec = &ast.ImportSpec{Path: &ast.BasicLit{Value: "", Kind: token.STRING}}
-
-			specs = append(specs, spec)
-		}
-	}
-
+	linesCounter = len(projectImports)
 	for _, projectImport := range projectImports {
 		spec := &ast.ImportSpec{
 			Path: &ast.BasicLit{Value: importWithComment(projectImport, commentsMetadata), Kind: tok},
+		}
+		specs = append(specs, spec)
+
+		linesCounter--
+
+		if linesCounter == 0 && len(generalImports) > 0 {
+			spec = &ast.ImportSpec{Path: &ast.BasicLit{Value: "", Kind: token.STRING}}
+
+			specs = append(specs, spec)
+		}
+	}
+
+	for _, generalImport := range generalImports {
+		spec := &ast.ImportSpec{
+			Path: &ast.BasicLit{Value: importWithComment(generalImport, commentsMetadata), Kind: tok},
 		}
 		specs = append(specs, spec)
 	}
